@@ -35,11 +35,6 @@ class EncodeDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.transform is not None:
-            # if isinstance(self.data[idx], np.ndarray):
-            #     # data = Image.fromarray((self.data[idx].squeeze(2)*255).astype(np.uint8))
-            #     data = Image.fromarray((self.data[idx]*255).astype(np.uint8))
-            #     return self.transform(data).float(), self.targets[idx]
-            # else:
             return self.transform(self.data[idx]).float(), self.targets[idx]
         return self.data[idx], self.targets[idx]
 

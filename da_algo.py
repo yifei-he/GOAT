@@ -9,7 +9,6 @@ from model import *
 import copy
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TEST_BS = 128
 
 def get_pseudo_labels(dataloader, model, confidence_q=0.1):
     logits = []
@@ -47,27 +46,14 @@ def self_train(args, source_model, datasets, epochs=10):
         trainset = datasets[i]
         ogloader = DataLoader(trainset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
                 
-        # trainset, train_idx = get_pseudo_trainset(trainset, teacher)
         test(targetloader, teacher)
         train_labs, train_idx = get_pseudo_labels(ogloader, teacher)
-        # train_acc = torch.sum(train_labs == torch.tensor(trainset.targets)) / len(train_labs)
-        # print("Pseudo-label train accuracy: " + str(train_acc.item()))
-        # print(trainset[0][1])
-        # trainset.targets = train_labs
 
         if torch.is_tensor(trainset.data):
             data = trainset.data.cpu().detach().numpy()
         else:
             data = trainset.data
         trainset  = EncodeDataset(data, train_labs, trainset.transform)
-        
-        # if torch.is_tensor(trainset.data):
-        #     trainset = EncodeDataset(trainset.data, train_labs)
-        # else:
-        #     trainset = EncodeDataset(trainset.data, train_labs, ToTensor())
-
-        # print(trainset[0][1])
-        test(targetloader, teacher)
         
         # filter out the least 10% confident data
         filter_trainset = Subset(trainset, train_idx)

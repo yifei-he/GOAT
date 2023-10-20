@@ -46,6 +46,7 @@ def get_single_rotate(train, angle, dataset="mnist", encoder=None):
     transform = Compose([ToTensor(), RandomRotation((angle, angle))])
 
     if dataset == "mnist":
+        # uncomment the following line if MNIST is not downloaded
         # dataset = datasets.MNIST(root="/data/mnist/", train=train, download=True, transform=transform)
         dataset = datasets.MNIST(root="/data/common", train=train, download=False, transform=transform)
 
@@ -70,13 +71,13 @@ def get_loaders(raw_trainset, raw_testset, batch_size):
 
 
 def get_encoded_dataset(encoder, dataset):
-    loader = DataLoader(dataset, batch_size=512, shuffle=True)
+    loader = DataLoader(dataset, batch_size=128, shuffle=True)
 
     latent, labels = [], []
     with torch.no_grad():
         for _, (data, label) in enumerate(loader):
             data = data.to(device)
-            latent.append(encoder(data))
+            latent.append(encoder(data).cpu())
             labels.append(label)
 
     latent = torch.cat(latent)

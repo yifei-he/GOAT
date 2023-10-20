@@ -33,22 +33,39 @@ def get_source_model(args, trainset, testset, n_class, mode, encoder=None, epoch
     return model
 
 
-def st_experiment(source_model, datasets, epochs=10):
-    model_copy = copy.deepcopy(source_model)
+def run_goat(model_copy, source_model, src_trainset, tgt_trainset, all_sets, generated_domains, epochs=10):
 
-    # get direct and target self-train
-    direct_acc, st_acc = self_train(source_model, datasets[-1], epochs=epochs)
-    # get ground-truth self-train
-    direct_acc, gt_st_acc = self_train(model_copy, datasets, epochs=epochs)
+    # get the performance of direct adaptation from the source to target, st involves self-training on target
+    direct_acc, st_acc = self_train(args, model_copy, [tgt_trainset], epochs=epochs)
+    # get the performance of GST from the source to target, st involves self-training on target
+    direct_acc_all, st_acc_all = self_train(args, source_model, all_sets, epochs=epochs)
 
-    return direct_acc, st_acc, gt_st_acc
+    # encode the source and target domains
+    e_src_trainset, e_tgt_trainset = get_encoded_dataset(source_model.encoder, src_trainset), get_encoded_dataset(source_model.encoder, tgt_trainset)
+
+    # encode the intermediate ground-truth domains
+    intersets = all_sets[:-1]
+    encoded_intersets = [e_src_trainset]
+    for i in intersets:
+        encoded_intersets.append(get_encoded_dataset(source_model.encoder, i))
+    encoded_intersets.append(e_tgt_trainset)
+
+    # generate intermediate domains
+    generated_acc = 0
+    if generated_domains > 0:
+        all_domains = []
+        for i in range(len(encoded_intersets)-1):
+            all_domains += generate_domains(generated_domains, encoded_intersets[i], encoded_intersets[i+1])
+
+        _, generated_acc = self_train(args, source_model.mlp, all_domains, epochs=epochs)
+    
+    return direct_acc, st_acc, direct_acc_all, st_acc_all, generated_acc
 
 
 def run_mnist_experiment(target, gt_domains, generated_domains):
 
     t = time.time()
 
-    angles = get_angles(target//5, target)[1:]
     src_trainset, tgt_trainset = get_single_rotate(False, 0), get_single_rotate(False, target)
 
     encoder = ENCODER().to(device)
@@ -57,26 +74,11 @@ def run_mnist_experiment(target, gt_domains, generated_domains):
 
     all_sets = []
     for i in range(1, gt_domains+1):
-        all_sets.append(get_single_rotate(True, i*target//(gt_domains+1)))
+        all_sets.append(get_single_rotate(False, i*target//(gt_domains+1)))
         print(i*target//(gt_domains+1))
     all_sets.append(tgt_trainset)
 
-    direct_acc, st_acc = self_train(args, model_copy, [tgt_trainset], epochs=10)
-    direct_acc_all, st_acc_all = self_train(args, source_model, all_sets, epochs=10)
-
-    e_src_trainset, e_tgt_trainset = get_encoded_dataset(source_model.encoder, src_trainset), get_encoded_dataset(source_model.encoder, tgt_trainset)
-    intersets = all_sets[:-1]
-    encoded_intersets = [e_src_trainset]
-    for i in intersets:
-        encoded_intersets.append(get_encoded_dataset(source_model.encoder, i))
-    encoded_intersets.append(e_tgt_trainset)
-
-    if generated_domains > 0:
-        all_domains = []
-        for i in range(len(encoded_intersets)-1):
-            all_domains += generate_domains(generated_domains, encoded_intersets[i], encoded_intersets[i+1])
-            
-        _, generated_acc = self_train(args, source_model.mlp, all_domains, epochs=10)
+    direct_acc, st_acc, direct_acc_all, st_acc_all, generated_acc = run_goat(model_copy, source_model, src_trainset, tgt_trainset, all_sets, generated_domains, epochs=5)
 
     elapsed = round(time.time() - t, 2)
     print(elapsed)
@@ -170,22 +172,7 @@ def run_portraits_experiment(gt_domains, generated_domains):
     all_sets = get_domains(gt_domains)
     all_sets.append(tgt_trainset)
     
-    direct_acc, st_acc = self_train(args, model_copy, [tgt_trainset], epochs=10)
-    direct_acc_all, st_acc_all = self_train(args, source_model, all_sets, epochs=10)
-
-    e_src_trainset, e_tgt_trainset = get_encoded_dataset(source_model.encoder, src_trainset), get_encoded_dataset(source_model.encoder, tgt_trainset)
-    intersets = all_sets[:-1]
-    encoded_intersets = [e_src_trainset]
-    for i in intersets:
-        encoded_intersets.append(get_encoded_dataset(source_model.encoder, i))
-    encoded_intersets.append(e_tgt_trainset)
-
-    if generated_domains > 0:
-        all_domains = []
-        for i in range(len(encoded_intersets)-1):
-            all_domains += generate_domains(generated_domains, encoded_intersets[i], encoded_intersets[i+1])
-            
-        _, generated_acc = self_train(args, source_model.mlp, all_domains, epochs=5)
+    direct_acc, st_acc, direct_acc_all, st_acc_all, generated_acc = run_goat(model_copy, source_model, src_trainset, tgt_trainset, all_sets, generated_domains, epochs=5)
 
     elapsed = round(time.time() - t, 2)
     with open(f"logs/portraits_exp_time.txt", "a") as f:
@@ -196,17 +183,12 @@ def run_covtype_experiment(gt_domains, generated_domains):
     data = make_cov_data(40000, 10000, 400000, 50000, 25000, 20000)
     (src_tr_x, src_tr_y, src_val_x, src_val_y, inter_x, inter_y, dir_inter_x, dir_inter_y,
         trg_val_x, trg_val_y, trg_test_x, trg_test_y) = data
-
-    epochs = 5
     
     src_trainset = EncodeDataset(torch.from_numpy(src_val_x).float(), src_val_y.astype(int))
     tgt_trainset = EncodeDataset(torch.from_numpy(trg_test_x).float(), torch.tensor(trg_test_y.astype(int)))
-    # src_trainset = EncodeDataset(torch.from_numpy(src_tr_x).float(), src_tr_y.astype(int))
-    # src_trainset = EncodeDataset(torch.from_numpy(np.concatenate([src_tr_x, src_val_x])).float(), np.concatenate([src_tr_y, src_val_y]).astype(int))
-    # tgt_trainset = EncodeDataset(torch.from_numpy((np.concatenate([trg_val_x, trg_test_x]))).float(), torch.tensor(np.concatenate([trg_val_y, trg_test_y]).astype(int)))
 
     encoder = MLP_Encoder().to(device)
-    source_model = get_source_model(args, src_trainset, src_trainset, 2, mode="covtype", encoder=encoder, epochs=epochs)
+    source_model = get_source_model(args, src_trainset, src_trainset, 2, mode="covtype", encoder=encoder, epochs=5)
     model_copy = copy.deepcopy(source_model)
 
     def get_domains(n_domains):
@@ -224,29 +206,10 @@ def run_covtype_experiment(gt_domains, generated_domains):
     all_sets = get_domains(gt_domains)
     all_sets.append(tgt_trainset)
 
-    direct_acc, st_acc = self_train(args, model_copy, [tgt_trainset], epochs=epochs)
-    direct_acc_all, st_acc_all = self_train(args, source_model, all_sets, epochs=epochs)
+    direct_acc, st_acc, direct_acc_all, st_acc_all, generated_acc = run_goat(model_copy, source_model, src_trainset, tgt_trainset, all_sets, generated_domains, epochs=5)
 
-    e_src_trainset, e_tgt_trainset = get_encoded_dataset(source_model.encoder, src_trainset), get_encoded_dataset(source_model.encoder, tgt_trainset)
-    intersets = all_sets[:-1]
-    encoded_intersets = [e_src_trainset]
-    for i in intersets:
-        encoded_intersets.append(get_encoded_dataset(source_model.encoder, i))
-    encoded_intersets.append(e_tgt_trainset)
-
-    if generated_domains > 0:
-        all_domains = []
-        for i in range(len(encoded_intersets)-1):
-            all_domains += generate_domains(generated_domains, encoded_intersets[i], encoded_intersets[i+1])
-        
-        _, generated_acc = self_train(args, source_model.mlp, all_domains, epochs=epochs)
-        with open(f"logs/covtype_exp_{args.log_file}.txt", "a") as f:
-                # f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc.item(), 2)},{round(st_acc.item(), 2)},{round(st_acc_all.item(), 2)},{round(generated_acc.item(), 2)}\n")
-                f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc, 2)},{round(st_acc, 2)},{round(st_acc_all, 2)},{round(generated_acc, 2)}\n")
-
-    else:
-        with open(f"logs/covtype{args.log_file}.txt", "a") as f:
-                f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc, 2)},{round(st_acc, 2)},{round(st_acc_all, 2)}\n")
+    with open(f"logs/covtype_exp_{args.log_file}.txt", "a") as f:
+            f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc, 2)},{round(st_acc, 2)},{round(st_acc_all, 2)},{round(generated_acc, 2)}\n")
 
 
 def run_color_mnist_experiment(gt_domains, generated_domains):
@@ -262,9 +225,7 @@ def run_color_mnist_experiment(gt_domains, generated_domains):
 
     encoder = ENCODER().to(device)
     source_model = get_source_model(args, src_trainset, src_trainset, 10, "mnist", encoder=encoder, epochs=20)
-    # source_model = get_source_model(args, tgt_trainset, tgt_trainset, 10, "mnist", encoder=encoder, epochs=10)
     model_copy = copy.deepcopy(source_model)
-
 
     def get_domains(n_domains):
         domain_set = []
@@ -285,44 +246,15 @@ def run_color_mnist_experiment(gt_domains, generated_domains):
     all_sets = get_domains(gt_domains)
     all_sets.append(tgt_trainset)
 
-    direct_acc, st_acc = self_train(args, model_copy, [tgt_trainset], epochs=10)
-    direct_acc_all, st_acc_all = self_train(args, source_model, all_sets, epochs=10)
-
-    e_src_trainset, e_tgt_trainset = get_encoded_dataset(source_model.encoder, src_trainset), get_encoded_dataset(source_model.encoder, tgt_trainset)
-
-    intersets = all_sets[:-1]
-    encoded_intersets = [e_src_trainset]
-    for i in intersets:
-        encoded_intersets.append(get_encoded_dataset(source_model.encoder, i))
-    encoded_intersets.append(e_tgt_trainset)
-
-    if generated_domains > 0:
-        all_domains = []
-        for i in range(len(encoded_intersets)-1):
-            all_domains += generate_domains(generated_domains, encoded_intersets[i], encoded_intersets[i+1])
-
-        _, generated_acc = self_train(args, source_model.mlp, all_domains, epochs=10)
-
+    direct_acc, st_acc, direct_acc_all, st_acc_all, generated_acc = run_goat(model_copy, source_model, src_trainset, tgt_trainset, all_sets, generated_domains, epochs=10)
         
-        with open(f"logs/color{args.log_file}.txt", "a") as f:
-            f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc, 2)},{round(st_acc, 2)},{round(direct_acc_all, 2)},{round(st_acc_all, 2)},{round(generated_acc, 2)}\n")
-
-    else:
-        with open(f"logs/color{args.log_file}.txt", "a") as f:
-            f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc, 2)},{round(st_acc, 2)},{round(direct_acc_all, 2)},{round(st_acc_all, 2)}\n")
+    with open(f"logs/color{args.log_file}.txt", "a") as f:
+        f.write(f"seed{args.seed}with{gt_domains}gt{generated_domains}generated,{round(direct_acc, 2)},{round(st_acc, 2)},{round(direct_acc_all, 2)},{round(st_acc_all, 2)},{round(generated_acc, 2)}\n")
 
 
 def main(args):
     
     print(args)
-
-    if args.seed is not None:
-        torch.cuda.manual_seed(args.seed)
-        torch.manual_seed(args.seed)
-        random.seed(args.seed)
-        np.random.seed(args.seed)
-        cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
     
     if args.dataset == "mnist":
         if args.mnist_mode == "normal":
@@ -339,7 +271,7 @@ if __name__ == '__main__':
     parser.add_argument("--dataset", choices=["mnist", "portraits", "covtype", "color_mnist"])
     parser.add_argument("--gt-domains", default=0, type=int)
     parser.add_argument("--generated-domains", default=0, type=int)
-    parser.add_argument("--seed", default=None, type=int)
+    parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--mnist-mode", default="normal", choices=["normal", "ablation"])
     parser.add_argument("--rotation-angle", default=45, type=int)
     parser.add_argument("--batch-size", default=128, type=int)
